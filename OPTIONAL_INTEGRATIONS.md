@@ -1,0 +1,3 @@
+# Optional integration extensions (not required for the 120-minute lab)
+
+The main lab uses GitHub Issues as the incident ticket so every participant can complete the exercise without a separate vendor account. The syllabus also mentions Slack, Jira, and ServiceNow. Add a live integration only after the client confirms a test workspace/project, approved app/API, permissions, and credentials handling. Use least-privilege credentials stored as repository or organization secrets; never place tokens in JSON, source files, screenshots, or logs. Start with a test destination. Do not trigger production remediation from the workflow.

@@ -1,0 +1,101 @@
+name: Day 4 Incident Response from Day 3 Output
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_remediation_simulation:
+        description: "Generate a no-side-effect remediation simulation report"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  incident-response:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate Day 3 data
+        run: python scripts/validate_day3_output.py
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Build incident events from Day 3 anomalies
+        run: python scripts/triage_from_day3.py
+      - name: Create GitHub Issues for HIGH and CRITICAL events
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'outputs/incident_events.json';
+            const payload = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const incidents = payload.incidents.filter(x => x.create_issue);
+            const summary = [];
+            for (const inc of incidents) {
+              const existing = await github.paginate(github.rest.issues.listForRepo, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'all',
+                per_page: 100
+              });
+              const match = existing.find(item => !item.pull_request && item.title === inc.issue_title);
+              if (match) {
+                summary.push(`EXISTS: ${inc.issue_title} (#${match.number})`);
+                continue;
+              }
+              const body = [
+                `> Synthetic training alert generated from the Day 3 anomaly comparison output. This is not a confirmed production incident.`,
+                '',
+                `- **Incident ID:** ${inc.incident_id}`,
+                `- **Timestamp:** ${inc.timestamp}`,
+                `- **Host:** ${inc.host}`,
+                `- **Training severity:** ${inc.severity}`,
+                `- **CPU:** ${inc.cpu_percent}%`,
+                `- **Memory:** ${inc.memory_percent}%`,
+                `- **Response time:** ${inc.response_time_ms} ms`,
+                `- **HTTP 5xx errors:** ${inc.http_5xx_count}`,
+                `- **Day 3 detections:** ${inc.detected_by.join(', ')}`,
+                `- **Metric reasons:** ${inc.metric_reasons.join(', ') || 'See attached report'}`,
+                '',
+                '## Next checks (read-only first)',
+                '1. Check application logs for this host and time window.',
+                '2. Check request volume, endpoint latency, and error rates.',
+                '3. Review deployment/configuration events.',
+                '4. Check host/container and dependency health.',
+                '',
+                '## Safety',
+                '- Root cause and customer impact are not established by these metrics alone.',
+                '- Do not restart, scale, delete, or modify a real system based on this training ticket.',
+                '- Follow the organization\'s incident and change-management process.'
+              ].join('\n');
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: inc.issue_title,
+                body
+              });
+              summary.push(`CREATED: ${inc.issue_title} (#${created.data.number})`);
+            }
+            fs.writeFileSync('outputs/issue_creation_summary.txt',
+              `Day 4 issue creation summary\nSource file: ${payload.source_file}\nFlagged observations: ${payload.flagged_observations}\n\n${summary.length ? summary.join('\n') : 'No HIGH/CRITICAL incidents were flagged; no Issue was created.'}\n`);
+      - name: Run safe remediation simulation (optional)
+        if: ${{ inputs.run_remediation_simulation }}
+        run: python scripts/simulate_remediation.py
+      - name: Upload incident response artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day4-incident-response-output
+          if-no-files-found: warn
+          path: |
+            outputs/incident_events.json
+            outputs/day4_incident_report.md
+            outputs/issue_creation_summary.txt
+            outputs/remediation_simulation.md
